@@ -1,0 +1,189 @@
+MAP
+  NAME "OSRM-Test"
+  EXTENT -77 42 -74 45
+  SIZE 700 550
+  FONTSET "/u/data/maps/fontset.txt"
+  IMAGECOLOR 238 238 153
+  TRANSPARENT OFF
+  UNITS DD
+#  DEBUG 5
+#  CONFIG MS_EEORFILE "stderr"
+
+  OUTPUTFORMAT
+    NAME "agg_qn"
+    DRIVER "AGG/PNG"
+    EXTENSION "png"
+    MIMETYPE "image/png"
+    IMAGEMODE RGB
+    FORMATOPTION "INTERLACE=false"
+    FORMATOPTION "QUANTIZE_NEW=ON"
+    FORMATOPTION "QUANTIZE_FORCE=ON"
+    FORMATOPTION "QUANTIZE_DITHER=OFF"
+    FORMATOPTION "QUANTIZE_COLORS=256"
+    #TRANSPARENT ON
+    #FORMATOPTION "TRANSPARENT=ON"
+  END
+
+  WEB
+    METADATA
+        labelcache_map_edge_buffer "-20"
+        "ows_title"     "Test OSRM database"
+        "ows_onlineresource"    "http://imaptools.com:8081/cgi-bin/mapserv?MAP=/u/data/maps/osrm.map"
+        "ows_srs"       "EPSG:4269 EPSG:4326 EPSG:900913 EPSG:3857"
+        "ows_abstract"  "This WMS is for a Test OSRM database"
+        "ows_contactperson"     "Stephen Woodbridge"
+        "ows_contactorganization" "iMaptools.com"
+        "ows_contactposition"   "Owner"
+        "ows_contactelectronicmailaddress" "info@imaptools.com"
+        "ows_enable_request" "GetMap"
+    END
+  END
+
+  PROJECTION "init=epsg:4326" END
+
+  LAYER
+    NAME "Streets"
+    STATUS DEFAULT
+    TYPE LINE
+    PROJECTION "init=epsg:4326" END
+    CONNECTIONTYPE postgis
+    CONNECTION "user=postgres dbname=osrm_test host=localhost port=5432"
+    DATA "the_geom from (select id, (12-speed_cat::integer)::float/4.0 as wsize, name, the_geom from ddnoded2) as foo using SRID=4326 using unique id"
+    #SIZEUNITS METERS
+    LABELITEM "name"
+    CLASS
+      STYLE
+        COLOR 87 87 87
+        WIDTH [wsize]
+        MINWIDTH 1.00
+        MAXWIDTH 10.0
+      END
+      LABEL
+        MAXSCALEDENOM 1000000
+        TYPE TRUETYPE
+        FONT "arial"
+        SIZE [wsize]
+        MAXSIZE 10
+        MINSIZE 8
+        STYLE
+          GEOMTRANSFORM 'labelpoly'
+          COLOR "#ffffff"
+        END # STYLE
+        COLOR "#000000"
+        #BACKGROUNDCOLOR "#ffffff"
+        #SHADOWCOLOR "#ffffff"
+        PARTIALS FALSE
+        MINDISTANCE 250
+        MINFEATURESIZE 10
+        BUFFER 4
+        ANGLE FOLLOW
+      END
+    END
+  END
+
+  symbol
+    name "one_way_from"
+    type truetype
+    font arial-bold
+    character ">"
+    #gap -60
+  end
+  symbol
+    name "one_way_to"
+    type truetype
+    font arial-bold
+    character "<"
+    #gap -60
+  end
+
+  LAYER
+    NAME "One_Way_Arrows"
+    STATUS DEFAULT
+    TYPE LINE
+    PROJECTION "init=epsg:4326" END
+    CONNECTIONTYPE postgis
+    CONNECTION "user=postgres dbname=osrm_test host=localhost port=5432"
+    DATA "the_geom from (select id, dir_travel, the_geom from ddnoded2 where dir_travel in ('T','F') ) as foo using SRID=4326 using unique id"
+    CLASSITEM 'dir_travel'
+    CLASS
+      MINSCALEDENOM 3000000
+      NAME 'From'
+      EXPRESSION "F"
+      STYLE
+        SYMBOL "one_way_from"
+        COLOR "#000000"
+        SIZE 6
+        GAP -60
+      END
+    END
+    CLASS
+      MINSCALEDENOM 3000000
+      NAME 'To'
+      EXPRESSION "T"
+      STYLE
+        SYMBOL "one_way_to"
+        COLOR "#000000"
+        SIZE 6
+        GAP -60
+      END
+    END
+    CLASS
+      MAXSCALEDENOM 3000000
+      NAME 'From'
+      EXPRESSION "F"
+      STYLE
+        SYMBOL "one_way_from"
+        COLOR "#000000"
+        SIZE 9
+        GAP -60
+      END
+    END
+    CLASS
+      MAXSCALEDENOM 3000000
+      NAME 'To'
+      EXPRESSION "T"
+      STYLE
+        SYMBOL "one_way_to"
+        COLOR "#000000"
+        SIZE 9
+        GAP -60
+      END
+    END
+  END
+
+  symbol
+    name "circle"
+    type ellipse
+    filled true
+    points 1 1 end
+  end
+
+  LAYER
+    NAME "Vertices"
+    status DEFAULT
+    TYPE POINT
+    PROJECTION "init=epsg:4326" END
+    CONNECTIONTYPE postgis
+    CONNECTION "user=postgres dbname=osrm_test host=localhost port=5432"
+    DATA "the_geom from (select id, the_geom from ddnoded2_vertices_pgr ) as foo using SRID=4326 using unique id"
+    CLASS
+      NAME 'vertex'
+      MAXSCALEDENOM 1000000
+      STYLE
+        COLOR "#ff0000"
+        SYMBOL "circle"
+        SIZE 7
+      END
+    END
+    CLASS
+      NAME 'vertex'
+      MINSCALEDENOM 1000000
+      STYLE
+        COLOR "#ff0000"
+        SYMBOL "circle"
+        SIZE 3
+      END
+    END
+  END
+
+END

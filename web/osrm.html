@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>iMaptools Leaflet Demo</title>
+    <meta charset="utf-8" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <link rel="stylesheet" href="/leaflet-0.6.4/leaflet.css" />
+    <!--[if lte IE 8]><link rel="stylesheet" href="../dist/leaflet.ie.css" /><![endif]-->
+    <script src="/leaflet-0.6.4/leaflet.js"></script>
+    <link rel="stylesheet" href="/jquery-ui-1.10.3/css/ui-lightness/jquery-ui-1.10.3.custom.min.css" />
+    <style>
+    body {
+        padding: 0;
+        margin: 0;
+    }
+    html, body, #map {
+        height: 100%;
+    }
+    #panel {
+        position: absolute;
+        top: 5px;
+        left: 50%;
+        margin-left: -330px;
+        z-index: 5;
+        background-color: #fff;
+        padding: 3px;
+        border: 1px solid #999;
+    }
+    #progressbar {
+        position: absolute;
+        top: 45%;
+        left: 50%;
+        margin-left: -25%;
+        width: 50%;
+        z-index: 4
+    }
+    </style>
+    <script src="/jquery-1.10.2.min.js"></script>
+    <script src="/jquery-ui-1.10.3/js/jquery-ui-1.10.3.custom.min.js"></script>
+</head>
+<body onload="onLoad()">
+    <div id="panel">
+        <input onclick="routePath();" type=button value="Route Path">
+        <input onclick="optimizePath(0);" type=button value="Optimize Time">
+        <input onclick="optimizePath(1);" type=button value="Optimize Dist">
+        <input onclick="hideMarkers();" type=button value="Hide Markers">
+        <input onclick="showMarkers();" type=button value="Show Markers">
+        <input onclick="clearMarkers();" type=button value="Delete Markers">
+    </div>
+
+    <div id="progressbar"></div>
+
+    <div id="map"></div>
+
+    <div id="help" title="Help">
+        <p>This demo allows the user to set markers on the map and performs a Traveling Salesperson Problem (TSP) optimization to order the markers along the path. This rectangular grid was constructed for testing and each named road has a randomly assigned speed which will make for some strange time based routes.</p>
+        <ul>
+            <li>Click on the map to place a marker
+            <li>Right-click a marker to delete it
+            <li>Drag the marker to reposition it
+            <li>Click [Route Path] will generate an OSRM route point to point through the markers in the order they are dropped. (2 minimum).
+            <li>Click [Optimize Time] for Time based TSP optimization (4 markers minimum)
+            <li>Click [Optimize Dist] for Distance based TSP optimization (4 markers minimum)
+            <li>[Hide Markers] and [Show Markers] temporarily hide and show them.
+            <li>[Delete Markers] permanently removes the markers
+        </ul>
+        <p>The [Optimize *] uses OSRM to compute the distance matrix and caches the routes. 10 markers will call OSRM 90 (10*(10-1)) times. The distance matrix is feed into pgRouting's pgr_tsp() function to get the optimized order of points and the routes are then pulled out of the cache in the correct order.</p>
+        <p> The [Route Path] calls OSRM once using via points.</p>
+    </div>
+
+    <script>
+        var PRECISION = 6;
+        var ROUTER = "http://imaptools.com:5000/";
+
+        var map;
+        var markers = [];
+        var mNum = 1;
+        var path;
+        var route;
+
+        function roundTo(n, d) {
+            var scale = Math.pow( 10, d );
+            return Math.round( n * scale ) / scale;
+        }
+
+        // decode route geometry
+        function decode(encoded, precision) {
+            precision = Math.pow(10, -precision);
+            var len = encoded.length, index=0, lat=0, lng = 0, array = [];
+            while (index < len) {
+                var b, shift = 0, result = 0;
+                do {
+                    b = encoded.charCodeAt(index++) - 63;
+                    result |= (b & 0x1f) << shift;
+                    shift += 5;
+                } while (b >= 0x20);
+                var dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
+                lat += dlat;
+                shift = 0;
+                result = 0;
+                do {
+                    b = encoded.charCodeAt(index++) - 63;
+                    result |= (b & 0x1f) << shift;
+                    shift += 5;
+                } while (b >= 0x20);
+                var dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+                lng += dlng;
+                //array.push( {lat: lat * precision, lng: lng * precision} );
+                array.push( [lat * precision, lng * precision] );
+            }
+            return array;
+        }
+
+        function routePath() {
+            if (markers.length < 2) {
+                alert("You must have a minimum of 2 markers to compute a path.");
+                return;
+            }
+
+            var url = ROUTER + "viaroute?instructions=false&z=18&";
+            for (var i=0; i<markers.length; i++) {
+                var m = markers[i];
+                if (i) url += '&';
+                url += "loc="
+                    + roundTo( m.getLatLng().lat, 6 ) + ','
+                    + roundTo( m.getLatLng().lng, 6 );
+            }
+
+            $.ajax({
+                url: url,
+                dataType: 'jsonp',
+                jsonp: 'jsonp',
+                cache: true,
+                beforeSend: function() {
+                    $( "#progressbar" ).progressbar({
+                        value: false
+                    });
+                },
+                success: function( r ) {
+                    if (r['status'] == 0) {
+                        var g = decode(r['route_geometry'], PRECISION);
+                        var path = [];
+                        for (var i=0; i<g.length; i++) {
+                            path.push(new L.LatLng(g[i][0], g[i][1]));
+                        }
+                        if (route) map.removeLayer(route);
+                        route = L.polyline(path, {color: "blue"}).addTo(map);
+                    }
+                    else {
+                        alert( r['status_message'] );
+                    }
+                },
+                error: function( xhr, status ) {
+                    alert( "Request failed: " + status );
+                },
+                complete: function( xhr, status ) {
+                    // code to run regardless of success or failure
+                    $( "#progressbar" ).progressbar( "destroy" );
+                }
+            });
+        }
+
+        function optimizePath(mode) {
+            if (markers.length < 4) {
+                alert("You must have a minimum of 4 markers to optimize that path.");
+                return;
+            }
+
+            var xml = '';
+            for (var i=0; i<markers.length; i++) {
+                var m = markers[i];
+                if (i) xml += ';';
+                xml += m.title + ','
+                    + roundTo( m.getLatLng().lng, 6 ) + ','
+                    + roundTo( m.getLatLng().lat, 6 );
+            }
+
+            //alert(xml);
+
+            $.ajax({
+                url: "osrm-optimize.php",
+                data: {
+                    start: markers[0].title,
+                    stop: -1,
+                    mode: mode, // 0 = time, 1 = distance
+                    pnts: xml
+                },
+                type: "GET",
+                dataType: 'jsonp',
+                jsonp: 'jsonp',
+                beforeSend: function() {
+                    $( "#progressbar" ).progressbar({
+                        value: false
+                    });
+                },
+                success: function( r ) {
+                    if (r['status'] == 0) {
+                        var rg = r['route_geometry'];
+                        var rpath = [];
+                        for (var j=0; j<rg.length; j++) {
+                            var g = decode(rg[j], PRECISION);
+                            for (var i=0; i<g.length; i++) {
+                                rpath.push(new L.LatLng(g[i][0], g[i][1]));
+                            }
+                        }
+                        if (path) map.removeLayer(path);
+                        path = L.polyline(rpath, {color: "green"}).addTo(map);
+                    }
+                    else {
+                        alert( r['status_message'] );
+                    }
+                },
+                error: function( xhr, status ) {
+                    alert( "Request failed: " + status );
+                },
+                complete: function( xhr, status ) {
+                    // code to run regardless of success or failure
+                    $( "#progressbar" ).progressbar( "destroy" );
+                }
+            });
+        }
+
+        function clearMarkers() {
+            hideMarkers();
+            markers = [];
+            mNum = 1;
+            path = null;
+            route = null;
+        }
+
+        function showMarkers() {
+            for (var i=0; i<markers.length; i++) {
+                markers[i].addTo(map);
+            }
+            if (path) path.addTo(map);
+            if (route) route.addTo(map);
+        }
+
+        function hideMarkers() {
+            for (var i=0; i<markers.length; i++) {
+                map.removeLayer(markers[i]);
+            }
+            if (path) map.removeLayer(path);
+            if (route) map.removeLayer(route);
+        }
+
+        function onLoad() {
+
+            map = L.map('map').setView([43.5, -75.5], 10);
+
+            L.tileLayer.wms('http://imaptools.com:8080/cgi-bin/mapserv?MAP=/u/data/maps/osrm.map', {
+                layers: 'OSRM-Test',
+                format: 'image/png',
+                transparent: false,
+                attribution: '&copy; <a href="http://imaptools.com">iMaptools</a>'
+            }).addTo(map);
+
+            map.on('click', onMapClick);
+        }
+
+        $(document).ready(function() {
+            // initialize jquery stuff here
+            $("#help").dialog({ modal: true, width: "75%" });
+        });
+
+        function onMapClick(e) {
+            var mtitle = ''+(mNum++);
+            var m = L.marker(e.latlng, {
+                    title: mtitle,
+                    opacity: 0.5
+                }).addTo(map);
+            m.title = mtitle;
+            m.dragging.enable();
+            m.on('contextmenu', function(e) {
+                for (var i=0; i<markers.length; i++) {
+                    if (this == markers[i]) {
+                        map.removeLayer(markers[i]);
+                        markers.splice(i, 1);
+                        return;
+                    }
+                }
+            });
+
+            markers.push(m);
+        }
+
+    </script>
+</body>
+</html>

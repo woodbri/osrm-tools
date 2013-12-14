@@ -1,0 +1,15 @@
+#/bin/sh
+if [ a`id -un` != 'awww-data' ] ; then
+    exec sudo -u www-data ./run-test-server
+    exit $?
+fi
+
+cd test
+echo "Starting OSRM server"
+if [ -f server.ini ]; then
+    nohup osrm-routed &
+else
+    echo "Failed to find server.ini file to configure server."
+    exit 1
+fi
+exit 0

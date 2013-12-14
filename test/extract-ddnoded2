@@ -1,0 +1,3 @@
+#!/bin/sh
+rm ddnoded2.osrm*
+../pgr2osrm/pgr2osrm ddnoded2 ddnoded2_vertices_pgr ddnoded2_restrictions

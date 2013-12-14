@@ -1,0 +1,97 @@
+#/bin/sh
+
+DBNAME=osrm_test
+DBUSER=postgres
+DBHOST=localhost
+
+dropdb -U $DBUSER -h $DBHOST $DBNAME
+createdb -U $DBUSER -h $DBHOST $DBNAME
+
+psql -U $DBUSER -h $DBHOST $DBNAME <<EOF
+create extension postgis;
+create extension pgrouting;
+
+-- create 50x50 grid of overlapping lines horizontal and vertical
+
+create table ddunnoded (
+  id serial not null primary key,
+  name text,
+  dir_travel character(1),
+  speed_cat character(1)
+);
+select addgeometrycolumn('ddunnoded', 'the_geom', 4326, 'LINESTRING', 2);
+
+insert into ddunnoded (dir_travel, speed_cat, name, the_geom)
+select case when s1%7 = 0 then 'F' when s1%7 = 4 then 'T' else 'B' end,
+       (random()*4+1)::character,
+       'H'||s1,
+       st_setsrid(st_makeline(st_makepoint(-77.0, 42.0+(3.0/50.0*(s1-1))),
+                              st_makepoint(-74.0, 42.0+(3.0/50.0*(s1-1)))), 4326)
+  from (select generate_series(1,50) as s1) as foo
+union all
+select case when s1%11 = 0 then 'F' when s1%11 = 7 then 'T' else 'B' end,
+       (random()*4+1)::character,
+       'V'||s1,
+       st_setsrid(st_makeline(st_makepoint(-77.0+(3.0/50.0*(s1-1)), 42.0),
+                              st_makepoint(-77.0+(3.0/50.0*(s1-1)), 45.0)), 4326)
+  from (select generate_series(1,50) as s1) as foo;
+
+-- node the grid so we can use it
+select pgr_nodenetwork('ddunnoded',0.000001);
+
+
+-- cat m/sec   kph     mph
+-- 1   25      90      56
+-- 2   18      65      40
+-- 3   15      54      33
+-- 4   10      36      22
+-- 5    5      18      11
+
+-- copy the noded table into a table we can use for a graph
+-- and add the required columns
+create table ddnoded2 (
+  gid serial not null primary key,
+  id integer,
+  name text,
+  source integer,
+  target integer,
+  dir_travel character(1),
+  speed_cat character(1),
+  roundabout character(1) default 'N',
+  tunnel character(1) default 'N',
+  bridge character(1) default 'N',
+  len_m float8,
+  cost float8
+);
+select addgeometrycolumn('ddnoded2', 'the_geom', 4326, 'LINESTRING', 2);
+
+insert into ddnoded2 (id, name, dir_travel, speed_cat, len_m, cost, the_geom)
+select a.id, 
+       name,
+       dir_travel, 
+       speed_cat, 
+       st_length2d_spheroid(a.the_geom, 'SPHEROID["GRS_1980",6378137,298.257222101]') as len_m,
+       st_length2d_spheroid(a.the_geom, 'SPHEROID["GRS_1980",6378137,298.257222101]') / case when speed_cat='1' then  25.0
+           when speed_cat='2' then  18.0
+           when speed_cat='3' then  15.0
+           when speed_cat='4' then  10.0
+           else 5.0 end as cost, 
+       a.the_geom
+  from ddunnoded_noded a, ddunnoded b
+ where a.old_id=b.id
+ order by a.old_id, a.sub_id;
+
+-- now create a topology
+select pgr_createtopology('ddnoded2', 0.000001, id:='gid');
+
+create table ddnoded2_restrictions (
+    id serial not null primary key,
+    n_via integer,
+    n_from integer,
+    n_to integer,
+    is_forbidden boolean,
+    to_way_id integer
+);
+
+-- Total query runtime: 8080 ms.
+EOF

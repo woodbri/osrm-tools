@@ -1,0 +1,5 @@
+# osrm extension
+comment = 'Wrapper functions to access OSRM server'
+default_version = '1.0'
+encoding = 'UTF8'
+relocatable = true
