@@ -24,6 +24,8 @@ Assuming you have postgresql 9.2 and Postgis 2.x installed:
 ./mk-testdb2 # to create a small test database "osrm_test"
 cd test
 ./extract-ddnoded2 
+...
+```
 
 ---------------------------------------------------------
 Process
