@@ -1,4 +1,4 @@
 *.o
 *.so
-test
+test/*.osrm*
 pgr2osrm/pgr2osrm
