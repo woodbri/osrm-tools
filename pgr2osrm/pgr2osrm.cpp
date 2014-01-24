@@ -132,7 +132,7 @@ int writeVertices( pqxx::connection &conn, std::ofstream &out, std::string &vtab
               ++row
             ) {
 
-            int32_t lat = row["lat"].as<uint32_t>();
+            int32_t lat = row["lat"].as<int32_t>();
             out.write( (const char *) &lat, sizeof(int32_t) );
 
             int32_t lon = row["lon"].as<int32_t>();
