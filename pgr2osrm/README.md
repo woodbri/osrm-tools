@@ -15,11 +15,18 @@ Assumptions:
 We have to create the files described here:
 see: https://github.com/DennisOSRM/Project-OSRM/wiki/OSRM-normalized-file-format
 
-You have to have Project-OSRM checkout, built and referenced in the Malefile. IE: set OSRMDIR= ../Project-OSRM
+You have to have Project-OSRM checkout, built and referenced in the Makefile. IE: set OSRMDIR= ../Project-OSRM
 Make the path appropriate for your locations.
 
+## BUILDING
+Assumes you have checkout Project-OSRM and built that. Then you editted the Makefile so OSRMDIR points to it.
+```
+make
+sudo cp pgr2osrm /somewhere/in/your/path/.
+```
+
 ## TESTING
-Assuming you have postgresql 9.2 and Postgis 2.x installed:
+Assuming you have postgresql 9.2 and Postgis 2.x installed. These are just scripts so read them to see what they do.
 ```
 ./mk-testdb2 # to create a small test database "osrm_test"
 cd test
@@ -30,6 +37,10 @@ cd test
 ---------------------------------------------------------
 Process
 ---------------------------------------------------------
+
+The following is basically the SQL the is run by the pgr2osrm command. You
+do NOT need to run this SQL, it is only here as a reference.
+
 ```
 create table names (
     id serial not null primary key,
