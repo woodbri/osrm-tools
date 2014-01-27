@@ -65,7 +65,7 @@ void _PG_init(void)
         ALLOCSET_SMALL_MINSIZE,
         ALLOCSET_SMALL_INITSIZE,
         ALLOCSET_SMALL_MAXSIZE);
-    MemoryContextSwitchTo(globals.pg_ctxt);
+    //MemoryContextSwitchTo(globals.pg_ctxt);
 }
 
 static size_t read_callback(void *ptr, size_t size, size_t nmemb, void *userp)
@@ -107,6 +107,7 @@ static char *curl_do_actual_work(int method_type, char *url, char *payload)
     StringInfoData buf;
     struct help_struct read_chunk, write_chunk;
     int i;
+    MemoryContext old_ctxt = MemoryContextSwitchTo(globals.pg_ctxt);
  
     read_chunk.string = palloc(1); /* will be grown as needed by the realloc above */
     read_chunk.size = 0; /* no data at this point */
@@ -120,6 +121,7 @@ static char *curl_do_actual_work(int method_type, char *url, char *payload)
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L); /* Consider making this configurable */
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&read_chunk);
+
         if (method_type == OSRMCURL_PUT) {
             curl_easy_setopt(curl, CURLOPT_UPLOAD, 1);
 
@@ -135,6 +137,7 @@ static char *curl_do_actual_work(int method_type, char *url, char *payload)
 
         if (method_type == OSRMCURL_POST) {
             curl_easy_setopt(curl, CURLOPT_POST, 1);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload);
         }
 
         if (method_type == OSRMCURL_DELETE) {
@@ -154,6 +157,7 @@ static char *curl_do_actual_work(int method_type, char *url, char *payload)
         appendStringInfo(&buf, "%s", read_chunk.string);
         pfree(read_chunk.string);
     }
+    MemoryContextSwitchTo(old_ctxt);
     return buf.data;
 }
 
