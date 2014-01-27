@@ -47,7 +47,7 @@ void createNames( pqxx::connection &conn, std::string &etable )
               "_osrm_names (  id serial not null primary key, name text)" );
     txn.exec( "insert into " + etable + "_osrm_names (name) " + 
               "select distinct name from " + etable +
-              " where name is not null order by name asc" );
+              " where nullif(name, '') is not null order by name asc" );
     txn.exec( "create unique index " + etable + "_osrm_names_name on " +
               etable + "_osrm_names using btree(name asc)" );
     txn.commit();
@@ -75,6 +75,7 @@ int writeNames( pqxx::connection &conn, std::string &filename, std::string &etab
     // write total number of characters
     out.write( (const char *) &ccnt, sizeof(uint32_t) );
 
+    // the first slot is for null names or name=""
     uint32_t zero = 0;
     out.write( (const char *) &zero, sizeof(uint32_t) );
     out.write( (const char *) &zero, sizeof(uint32_t) );
