@@ -106,6 +106,7 @@ static char *curl_do_actual_work(int method_type, char *url, char *payload)
     CURLcode res;
     StringInfoData buf;
     struct help_struct read_chunk, write_chunk;
+    int i;
  
     read_chunk.string = palloc(1); /* will be grown as needed by the realloc above */
     read_chunk.size = 0; /* no data at this point */
@@ -147,6 +148,9 @@ static char *curl_do_actual_work(int method_type, char *url, char *payload)
 
     initStringInfo(&buf);
     if(read_chunk.string) {
+        for (i=0; i<read_chunk.size; i++)
+            if (read_chunk.string[i] == '\0')
+                read_chunk.string[i] = ' ';
         appendStringInfo(&buf, "%s", read_chunk.string);
         pfree(read_chunk.string);
     }
@@ -812,15 +816,78 @@ static route_geom *jget_route_geometry(char *json, bool alt)
 }
 
 
+static char **jget_route_text(char *json, bool alt, int *cnt)
+{
+    char **rg;
+    int rt_cnt;
+
+    struct json_object *jtree;
+    struct json_object *jobj;
+    struct json_object *ja;
+    char *key = alt ? "alternative_geometries" : "route_geometry";
+
+    jtree = json_tokener_parse(json);
+    if (!jtree)
+        elog(ERROR, "Invalid json document in OSRM response!");
+
+    jobj = json_object_object_get(jtree, key);
+    if (!jobj) {
+        DBG("-- Failed to find '%s' key in json document!", key);
+        json_object_put(jtree);
+        return NULL;
+    }
+    DBG("-- key: %s", key);
+    DBG("-- val: %s", json_object_to_json_string(jobj));
+
+    rt_cnt = 0;
+    if (alt) {
+        if (json_object_get_type(jobj) == json_type_array) {
+            int i;
+            rt_cnt = json_object_array_length(jobj);
+            if (rt_cnt > 0) {
+                rg = malloc( rt_cnt * sizeof(char *) );
+                for (i=0; i<rt_cnt; i++) {
+                    ja = json_object_array_get_idx(jobj, i);
+                    rg[i] = strdup( json_object_get_string(ja) );
+                }
+            }
+        }
+    }
+    else {
+        DBG("json_object_get_type(jobj): %d, json_type_string: %d",
+            json_object_get_type(jobj), json_type_string);
+        if (json_object_get_type(jobj) == json_type_string) {
+            rt_cnt = 1;
+            rg = malloc( rt_cnt * sizeof(char *) );
+            rg[0] = strdup( json_object_get_string(jobj) );
+            DBG("-- rg-text: %s", rg[0]);
+        }
+    }
+    json_object_put(jtree);
+
+    DBG("-- rt_cnt: %d", rt_cnt);
+
+    *cnt = rt_cnt;
+    if (rt_cnt)
+        return rg;
+    
+    return NULL;
+}
+
+
 static char *callOSRM(char *url)
 {
     int status;
     char *mess;
 
+    DBG( "url: %s", url );
+
     char *json = curl_do_actual_work(OSRMCURL_GET, url, NULL);
     if (!json || strlen(json) == 0) {
         elog(ERROR, "OSRM request failed to return a document!");
     }
+
+    DBG( "json: %s", json );
 
     mess = jget_status(json, &status);
     if (status != 0) {
@@ -1042,7 +1109,7 @@ static dmatrix_cache *buildDmatrixCache(int cnt, float8 *lat, float8 *lon, char 
             url = makeViaRouteUrl(lat[i], lon[i], lat[j], lon[j], 
                 hints[i], hints[j], baseurl, 18, inst, false );
 
-            //DBG("-- URL(%d, %d): %s", i, j, url);
+            DBG("-- URL(%d, %d): %s", i, j, url);
 
             cache->json[i*cnt + j] = callOSRM(url);
             pfree(url);
@@ -1166,10 +1233,8 @@ Datum osrm_locate(PG_FUNCTION_ARGS)
 
     url = (char *) palloc( url_len * sizeof(char) );
     snprintf(url, url_len, "%s/locate?loc=%.6lf,%.6lf", baseurl, lat, lon);
-    DBG("-- url: %s", url);
 
     json = callOSRM( url );
-    DBG("-- json: %s", json);
 
     ret = jget_mapped_loc( json, &mlat, &mlon );
     DBG("-- jget_mapped_loc ret: %d, mlat: %.6lf, mlon: %.6lf", ret, mlat, mlon);
@@ -1242,10 +1307,8 @@ Datum osrm_nearest(PG_FUNCTION_ARGS)
 
     url = (char *) palloc( url_len * sizeof(char) );
     snprintf(url, url_len, "%s/nearest?loc=%.6lf,%.6lf", baseurl, lat, lon);
-    DBG("-- url: %s", url);
 
     json = callOSRM( url );
-    DBG("-- json: %s", json);
 
     ret = jget_mapped_loc( json, &mlat, &mlon );
     DBG("-- jget_mapped_loc ret: %d, mlat: %.6lf, mlon: %.6lf", ret, mlat, mlon);
@@ -1328,11 +1391,7 @@ Datum osrm_viaroute(PG_FUNCTION_ARGS)
                  "&loc=%.6lf,%.6lf", lat[i], lon[i]);
     }
 
-    DBG( "url: %s", url );
-
     json = callOSRM( url );
-
-    DBG( "json: %s", json );
 
     pfree(url);
 
@@ -1668,6 +1727,111 @@ Datum osrm_jget_route(PG_FUNCTION_ARGS)
 
 
 /*
+CREATE OR REPLACE FUNCTION osrm_jget_route_text(
+        IN json text,
+        IN alt boolean default false
+        OUT seq integer,
+        OUT rt text
+    ) RETURNS SETOF RECORD
+    AS '$libdir/osrm', 'osrm_jget_route_text'
+    LANGUAGE c IMMUTABLE STRICT;
+*/
+
+Datum osrm_jget_route_text(PG_FUNCTION_ARGS)
+{
+    FuncCallContext     *funcctx;
+    int                  call_cntr;
+    int                  max_calls;
+    TupleDesc            tuple_desc;
+    char                *json;
+    bool                 alt;
+    char               **rg = NULL;
+    int                  cnt;
+
+    /* stuff done only on the first call of the function */
+    if (SRF_IS_FIRSTCALL()) {
+        MemoryContext   oldcontext;
+
+        /* create a function context for cross-call persistence */
+        funcctx = SRF_FIRSTCALL_INIT();
+
+        /* switch to memory context appropriate for multiple function calls */
+        oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+        json = text2char(PG_GETARG_TEXT_P(0));
+        alt = PG_GETARG_BOOL(1);
+
+        rg = jget_route_text(json, alt, &cnt);
+
+        pfree(json);
+        if ( !rg ) {
+            DBG("-- jget_route_text returned null");
+            SRF_RETURN_DONE(funcctx);
+        }
+
+        DBG("route_geom: rows: %d", cnt);
+
+        funcctx->max_calls = cnt;
+        funcctx->user_fctx = rg;
+
+        /* Build a tuple descriptor for our result type */
+        if (get_call_result_type(fcinfo, NULL, &tuple_desc) != TYPEFUNC_COMPOSITE)
+            ereport(ERROR,
+                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                errmsg("function returning record called in context "
+                       "that cannot accept type record")));
+
+        funcctx->tuple_desc = BlessTupleDesc(tuple_desc);
+
+        MemoryContextSwitchTo(oldcontext);
+    }
+
+    /* stuff done on every call of the function */
+    funcctx = SRF_PERCALL_SETUP();
+
+    call_cntr  = funcctx->call_cntr;
+    max_calls  = funcctx->max_calls;
+    tuple_desc = funcctx->tuple_desc;
+    rg         = funcctx->user_fctx;
+
+    /* do when there is more left to send */
+    if (call_cntr < max_calls) {
+        HeapTuple    tuple;
+        Datum        result;
+        Datum *values;
+        bool *nulls;
+
+        values = palloc(2 * sizeof(Datum));
+        nulls = palloc(2 * sizeof(bool));
+
+        values[0] = Int32GetDatum(call_cntr+1);
+        nulls[0] = false;
+        if (rg[call_cntr]) {
+            values[1] = PointerGetDatum( cstring_to_text( rg[call_cntr] ) );
+            nulls[1] = false;
+            free(rg[call_cntr]);
+        }
+        else {
+            values[1] = PointerGetDatum( cstring_to_text( " " ) );
+            nulls[1] = true;
+        }
+
+        tuple = heap_form_tuple(tuple_desc, values, nulls);
+        result = HeapTupleGetDatum(tuple);
+
+        pfree(values);
+        pfree(nulls);
+
+        SRF_RETURN_NEXT(funcctx, result);
+    }
+    else {
+        if ( rg ) free(rg);
+        SRF_RETURN_DONE(funcctx);
+    }
+}
+
+
+/*
 CREATE OR REPLACE FUNCTION osrm_jget_instructions(
         IN json text,
         IN alt boolean default false,
@@ -1689,7 +1853,9 @@ CREATE OR REPLACE FUNCTION osrm_jget_instructions(
 Datum osrm_jget_instructions(PG_FUNCTION_ARGS)
 {
     FuncCallContext     *funcctx;
+#ifdef DEBUG
     int                  call_cntr;
+#endif
     int                  max_calls;
     TupleDesc            tuple_desc;
     int                  nresults = 0;
@@ -1751,7 +1917,9 @@ Datum osrm_jget_instructions(PG_FUNCTION_ARGS)
     /* stuff done on every call of the function */
     funcctx = SRF_PERCALL_SETUP();
 
+#ifdef DEBUG
     call_cntr  = funcctx->call_cntr;
+#endif
     max_calls  = funcctx->max_calls;
     tuple_desc = funcctx->tuple_desc;
     my_ctx     = funcctx->user_fctx;

@@ -1,7 +1,8 @@
+OSRM_VERSION = 1.1
 OBJS = osrm.o
-MODULE_big = osrm
+MODULE_big = osrm-$(OSRM_VERSION)
 EXTENSION = osrm
-DATA = osrm--1.0.sql
+DATA = osrm--$(OSRM_VERSION).sql
 DOCS = README.osrm
 
 CURL_LIBS := $(shell curl-config --libs)

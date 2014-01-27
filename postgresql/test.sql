@@ -103,6 +103,10 @@ select array_agg(array[row]) from (
 ) as bar;
 -- 1 row, 1283 ms
 
+select * from osrm_jgetRouteText((select json from dm_cache where irow=1 and icol=2));
+
+
+
 /*
 -- these still have to be coded
 
