@@ -1,6 +1,6 @@
 #/bin/sh
 if [ a`id -un` != 'awww-data' ] ; then
-    exec sudo -u www-data ./run-test-server
+    exec sudo -u www-data $0
     exit $?
 fi
 

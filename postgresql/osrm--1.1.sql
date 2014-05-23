@@ -136,7 +136,7 @@ CREATE OR REPLACE FUNCTION osrm_jgetInstructions(
         OUT "time" integer,
         OUT length text,
         OUT dir text,
-        OUT azimuth float
+        OUT azimuth float4
     ) RETURNS SETOF RECORD
     AS 'MODULE_PATHNAME', 'osrm_jget_instructions'
     LANGUAGE c IMMUTABLE STRICT;

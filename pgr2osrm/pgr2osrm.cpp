@@ -4,6 +4,9 @@
 #include <pqxx/pqxx>
 #include "UUID.h"
 
+#define GID_AS_NAME
+#undef GID_AS_NAME
+
 #define CURSOR_CHUNK 8192
 #define LIMIT " "
 //#define LIMIT " limit 5 "
@@ -46,8 +49,13 @@ void createNames( pqxx::connection &conn, std::string &etable )
     txn.exec( "create table " + etable + 
               "_osrm_names (  id serial not null primary key, name text)" );
     txn.exec( "insert into " + etable + "_osrm_names (name) " + 
+#ifdef GID_AS_NAME
+              "select gid::text as name from " + etable +
+              " order by gid asc" );
+#else
               "select distinct name from " + etable +
               " where nullif(name, '') is not null order by name asc" );
+#endif
     txn.exec( "create unique index " + etable + "_osrm_names_name on " +
               etable + "_osrm_names using btree(name asc)" );
     txn.commit();
@@ -197,7 +205,11 @@ int writeEdges( pqxx::connection &conn, std::ofstream &out, std::string &etable 
         "            else 0 end::integer as ignoreingrid, "
         "       0::integer as accessrestricted "
         "  from " + etable + " a left outer join " + etable + "_osrm_names b "
+#ifdef GID_AS_NAME
+        "    on a.gid::text=b.name where source != target "
+#else
         "    on a.name=b.name where source != target "
+#endif
         " order by a.target asc " + LIMIT,
         "edges",
         false

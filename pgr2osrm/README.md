@@ -19,7 +19,13 @@ You have to have Project-OSRM checkout, built and referenced in the Makefile. IE
 Make the path appropriate for your locations.
 
 ## BUILDING
-Assumes you have checkout Project-OSRM and built that. Then you editted the Makefile so OSRMDIR points to it.
+Since Project-OSRM changes the Normalized Data file format you need to use a version of Project-OSRM that osrm-tools is compatible with. So checkout Project-OSRM like this:
+```
+git checkout -b osrm-tools v0.3.7-2-gfbbd6ca
+```
+and build it.
+
+Then change to your osrm-tools/pgr2osrm and edit the Makefile so OSRMDIR points to the Project-OSRM built above.
 ```
 make
 sudo cp pgr2osrm /somewhere/in/your/path/.
@@ -38,7 +44,7 @@ cd test
 Process
 ---------------------------------------------------------
 
-The following is basically the SQL the is run by the pgr2osrm command. You
+The following is basically the SQL that is run by the pgr2osrm command. You
 do NOT need to run this SQL, it is only here as a reference.
 
 ```
@@ -46,7 +52,7 @@ create table names (
     id serial not null primary key,
     name text
 );
-insert into names (name) select distinct name from st order by name nulls first asc;
+insert into names (name) select distinct name from st where nullif(name, '') is not null order by name asc;
 create unique index names_name on names using btree(name asc nulls first);
 
 -- write <filename>.osrm.names using queries
@@ -64,19 +70,22 @@ select round(st_y(the_geom)*1000000.0)::integer as lat,
 -- write edges --
 select count(*) from st;
 select case when dir_travel='T' then target-1 else source-1 end as source,
-       case when dir travel='T' then source-1 else target-1 end as target,
-       round(st_length_spheriod(st_geometryn(the_geom, 1),
+       case when dir_travel='T' then source-1 else target-1 end as target,
+       round(st_length_spheroid(st_geometryn(the_geom, 1),
             'SPHEROID["GRS_1980",6378137,298.257222101]'))::integer as length,
        case when dir_travel = 'B' then 0 else 1 end::integer as dir,
-       round(case when speed_cat='1' then 130.0
-                  when speed_cat='2' then 101.0
-                  when speed_cat='3' then  91.0
-                  when speed_cat='4' then  71.0
-                  when speed_cat='5' then  51.0
-                  when speed_cat='6' then  31.0
-                  when speed_cat='7' then  11.0
-                  when speed_cat='8' then   5.0
-                  end * 0.027777778)::integer as weight,
+       round(st_length_spheroid(st_geometryn(the_geom, 1), 
+             'SPHEROID["GRS_1980",6378137,298.257222101]'::spheroid
+           ) / case when speed_cat='1' then 130.0 
+                    when speed_cat='2' then 101.0 
+                    when speed_cat='3' then  91.0 
+                    when speed_cat='4' then  71.0 
+                    when speed_cat='5' then  51.0 
+                    when speed_cat='6' then  31.0 
+                    when speed_cat='7' then  11.0 
+                    when speed_cat='8' then   5.0 
+                    else 1.0 
+                    end * 36.0)::integer as weight, 
         speed_cat::integer as rank,
         (b.id-1)::integer as nameid,
         case when roundabout='Y' then 1 else 0 end::integer as roundabout,
