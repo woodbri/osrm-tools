@@ -12,7 +12,7 @@ Tools to extract postgresql database into OSRM normalized files, and postgresql 
 pgr2osrm
 --------
 
-This directory contains a tools that will create an OSRM normalized file from a pgRouting database. The ORSM normalized file can be prepared with ``osrm-prepare`` and then run using ``osrm-routed``.
+This directory contains a tools that will create an OSRM normalized file from a pgRouting database. The ORSM normalized file can be prepared with ``osrm-prepare`` and then run using ``osrm-routed``. We currently only support Project-OSRM version v0.3.7-2-gfbbd6ca.
 
 postgresql
 ----------
