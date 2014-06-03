@@ -214,9 +214,18 @@ static char *jget_status(char *json, int *status)
     struct json_object *jobj;
     char *t;
 
+    if (!json) {
+        *status = -1;
+        json_object_put(jtree);
+        return pstrdup("Null json document in OSRM response!");
+    }
+
     jtree = json_tokener_parse(json);
-    if (!jtree)
-        elog(ERROR, "Invalid json document in OSRM response!");
+    if (!jtree) {
+        *status = -1;
+        json_object_put(jtree);
+        return pstrdup("Invalid json document in OSRM response!");
+    }
 
     jobj = json_object_object_get(jtree, "status");
     if (!jobj) {
@@ -894,7 +903,7 @@ static char *callOSRM(char *url)
     DBG( "json: %s", json );
 
     mess = jget_status(json, &status);
-    if (status != 0) {
+    if (status != 0 && status !=207) {
         if ( !mess ) mess = "";
         elog(ERROR, "OSRM request failed with status: (%d) %s", status, mess);
     }
