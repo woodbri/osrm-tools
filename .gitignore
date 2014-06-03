@@ -1,4 +1,6 @@
 *.o
 *.so
+starsnav/
 test/*.osrm*
+test/example*
 pgr2osrm/pgr2osrm
