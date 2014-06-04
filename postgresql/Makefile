@@ -1,4 +1,4 @@
-OSRM_VERSION = 1.1
+OSRM_VERSION = 2.0
 OBJS = osrm.o
 MODULE_big = osrm-$(OSRM_VERSION)
 EXTENSION = osrm

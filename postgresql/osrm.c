@@ -216,7 +216,6 @@ static char *jget_status(char *json, int *status)
 
     if (!json) {
         *status = -1;
-        json_object_put(jtree);
         return pstrdup("Null json document in OSRM response!");
     }
 
@@ -892,10 +891,11 @@ static char *callOSRM(char *url)
 {
     int status;
     char *mess;
+    char *json;
 
     DBG( "url: %s", url );
 
-    char *json = curl_do_actual_work(OSRMCURL_GET, url, NULL);
+    json = curl_do_actual_work(OSRMCURL_GET, url, NULL);
     if (!json || strlen(json) == 0) {
         elog(ERROR, "OSRM request failed to return a document!");
     }
@@ -1112,7 +1112,7 @@ static dmatrix_cache *buildDmatrixCache(int cnt, float8 *lat, float8 *lon, char 
     cache->cnt = cnt;
     cache->failures = 0;
 
-    hints = palloc( sizeof(char *) );
+    hints = palloc( cnt * sizeof(char *) );
     for (i=0; i<cnt; i++) hints[i] = NULL;
 
     for (i=0; i<cnt; i++) {
@@ -1535,37 +1535,174 @@ Datum osrm_dmatrix_get_json(PG_FUNCTION_ARGS)
 CREATE OR REPLACE FUNCTION osrm_dmatrix(
         IN lat float8[],
         IN lon float8[],
-        IN dist boolean default false,
         IN osrmhost text default 'http://localhost:5000'
-    ) RETURNS FLOAT8[]
+        OUT irow integer,
+        OUT icol integer,
+        OUT time float8
+    ) RETURNS SETOF RECORD
     AS '$libdir/osrm', 'osrm_dmatrix'
     LANGUAGE c IMMUTABLE STRICT;
+*/
 
 Datum osrm_dmatrix(PG_FUNCTION_ARGS)
 {
-    PG_RETURN_NULL();
+    FuncCallContext     *funcctx;
+    int                  call_cntr;
+    int                  max_calls;
+    TupleDesc            tuple_desc;
+    char                *baseurl;
+    DTYPE               *lat;
+    DTYPE               *lon;
+    int                  nlat = 0;
+    int                  nlon = 0;
+    int                  i;
+    bool                 dist;
+    dmatrix_cache2      *dmc;
+
+    /* stuff done only on the first call of the function */
+    if (SRF_IS_FIRSTCALL()) {
+        MemoryContext   oldcontext;
+
+        /* create a function context for cross-call persistence */
+        funcctx = SRF_FIRSTCALL_INIT();
+
+        /* switch to memory context appropriate for multiple function calls */
+        oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+        lat = get_pgarray(&nlat, PG_GETARG_ARRAYTYPE_P(0));
+        lon = get_pgarray(&nlon, PG_GETARG_ARRAYTYPE_P(1));
+        dist = PG_GETARG_BOOL(2);
+        baseurl = text2char(PG_GETARG_TEXT_P(3));
+
+        if (nlat != nlon || nlat < 2) 
+            elog(ERROR, "lat/lon arrays must be equal in length and "
+                        "greater than one element, and greater than 4 "
+                        "elements for use in TSP.");
+
+        dmc = palloc( sizeof(dmatrix_cache2) );
+        dmc->lat   = lat;
+        dmc->lon   = lon;
+        dmc->cnt   = nlat;
+        dmc->dist  = dist;
+        dmc->baseurl = baseurl;
+
+        DBG("   cnt: %d", dmc->cnt);
+        DBG("   baseurl: '%s'", dmc->baseurl);
+
+        dmc->hints = palloc( dmc->cnt * sizeof(char *) );
+        for (i=0; i<dmc->cnt; i++) dmc->hints[i] = NULL;
+
+        DBG("   zerod out hints array");
+
+        funcctx->max_calls = nlat * nlat;
+        funcctx->user_fctx = dmc;
+
+        /* Build a tuple descriptor for our result type */
+        if (get_call_result_type(fcinfo, NULL, &tuple_desc) != TYPEFUNC_COMPOSITE)
+            ereport(ERROR,
+                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                errmsg("function returning record called in context "
+                       "that cannot accept type record")));
+
+        funcctx->tuple_desc = BlessTupleDesc(tuple_desc);
+
+        DBG("   tuple_desc blessed");
+
+        MemoryContextSwitchTo(oldcontext);
+        DBG("   MemoryContextSwitchTo(oldcontext) done");
+    }
+
+    /* stuff done on every call of the function */
+    funcctx = SRF_PERCALL_SETUP();
+
+    call_cntr  = funcctx->call_cntr;
+    max_calls  = funcctx->max_calls;
+    tuple_desc = funcctx->tuple_desc;
+    dmc        = funcctx->user_fctx;
+
+    DBG("osrm_dmatrix: max_calls: %d, call_cntr: %d", max_calls, call_cntr);
+
+    /* do when there is more left to send */
+    if (call_cntr < max_calls) {
+        HeapTuple    tuple;
+        Datum        result;
+        Datum       *values;
+        char        *url;
+        char        *json;
+        bool        *nulls;
+        double       cost;
+        int irow = call_cntr / dmc->cnt;
+        int icol = call_cntr % dmc->cnt;
+
+        DBG("    irow: %d, icol: %d", irow, icol);
+
+        values = palloc(3 * sizeof(Datum));
+        nulls = palloc(3 * sizeof(bool));
+
+        values[0] = Int32GetDatum(irow + 1);
+        nulls[0] = false;
+        values[1] = Int32GetDatum(icol + 1);
+        nulls[1] = false;
+
+        if (irow == icol) {
+            cost = 0.0;
+        }
+        else {
+            url = makeViaRouteUrl(dmc->lat[irow], dmc->lon[irow],
+                dmc->lat[icol], dmc->lon[icol],
+                dmc->hints[irow], dmc->hints[icol],
+                dmc->baseurl, 18, false, false);
+            DBG("   url: %s", url);
+
+            json = callOSRM(url);
+            pfree(url);
+
+            if (!json) {
+                cost = -1.0;
+            }
+            else {
+                route_summary *rs;
+                int nrs = 0;
+                int nhints = 0;
+                char **thesehints;
+
+                rs = jget_summary(json, false, &nrs);
+                if (rs)
+                    cost = (double) (dmc->dist ? rs[0].tot_distance
+                                               : rs[0].tot_time);
+                else
+                    cost = -1.0;
+
+                thesehints = jget_hints(json, &nhints);
+                if (thesehints) {
+                    if (dmc->hints[irow] && nhints>0)
+                        dmc->hints[irow] = thesehints[0];
+                    if (dmc->hints[icol] && nhints>1)
+                        dmc->hints[icol] = thesehints[1];
+                    pfree(thesehints);
+                }
+            }
+        }
+        values[2] = Float8GetDatum( cost );
+        nulls[2] = false;
+
+        DBG("   cost: %.3lf", cost);
+
+        tuple = heap_form_tuple(tuple_desc, values, nulls);
+        result = HeapTupleGetDatum(tuple);
+
+        pfree(values);
+        pfree(nulls);
+
+        SRF_RETURN_NEXT(funcctx, result);
+    }
+    else {
+        /* Since dmc is allocated with palloc, PG will clean it up */
+        SRF_RETURN_DONE(funcctx);
+    }
 }
 
-*/
 
-/*
-CREATE OR REPLACE FUNCTION osrm_dmatrix(
-        IN start_lat float8,
-        IN start_lon float8,
-        IN lat float8[],
-        IN lon float8[],
-        IN dist boolean default false,
-        IN osrmhost text default 'http://localhost:5000'
-    ) RETURNS FLOAT8[]
-    AS '$libdir/osrm', 'osrm_dmatrix_row'
-    LANGUAGE c IMMUTABLE STRICT;
-
-Datum osrm_dmatrix_row(PG_FUNCTION_ARGS)
-{
-    PG_RETURN_NULL();
-}
-
-*/
 
 /*
 CREATE OR REPLACE FUNCTION osrm_jget_version(

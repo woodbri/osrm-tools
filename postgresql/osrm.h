@@ -68,6 +68,15 @@ typedef struct dmatrix_cache_t {
     char **json;
 } dmatrix_cache;
 
+typedef struct dmatrix_cache2_t {
+    int cnt;
+    bool dist;
+    char *baseurl;
+    float8 *lat;
+    float8 *lon;
+    char **hints;
+} dmatrix_cache2;
+
 /* Per-backend global state. */
 struct osrm_curl_global
 {
