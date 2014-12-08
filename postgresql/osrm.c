@@ -164,6 +164,11 @@ static char *curl_do_actual_work(int method_type, char *url, char *payload)
 /* ********************* end of curl stuff ********************** */
 /* ********************* start of private functions ************* */
 
+static char *makeViaRouteUrl(float8 lat1, float8 lon1, float8 lat2, float8 lon2, char *hint1, char *hint2, char *baseurl, int zoom, bool inst, bool alt);
+
+static char *callOSRM(char *url);
+
+
 static char *text2char(text *in)
 {
     char *out = palloc(VARSIZE(in));
@@ -205,6 +210,24 @@ static char *jget_version(char *json)
     json_object_put(jtree);
 
     return t;
+}
+
+
+static char *get_osrm_version(char *baseurl)
+{
+    char *url;
+    char *json;
+    char *ver = NULL;
+
+    /* create a bogus route request to get server response which has version  */
+    url = makeViaRouteUrl(0.0, 0.0, 0.01, 0.01, NULL, NULL, baseurl, 0, false, false);
+    json = callOSRM(url);
+    pfree(url);
+
+    if (json)
+        ver = jget_version(json);
+
+    return ver;
 }
 
 
@@ -1197,6 +1220,97 @@ static float8 *dmatrixFromCache(dmatrix_cache *cache, bool dist, bool symmetric)
     return dm;
 }
 
+#define ERROR_RETURN( arg... ) \
+    do { \
+      if (json) pfree(json); \
+      if (dm) pfree(dm); \
+      if (jtree) json_object_put(jtree); \
+      DBG( arg ); \
+      return NULL; \
+    } while (1);
+
+static float8 *getOsrmTable(float8 *lat, float8 *lon, int cnt, char *baseurl, int zoom)
+{
+    struct json_object *jtree = NULL;
+    struct json_object *jobj;
+    struct json_object *ja;
+    struct json_object *jb;
+    char buf[100];
+    char *url;
+    char *json = NULL;
+    int i, j;
+    int icnt, jcnt;
+    float8 *dm = NULL;
+
+    url = palloc(strlen(baseurl)+30+cnt*30);
+    strcpy(url, baseurl);
+    strcat(url, "/table?");
+    for (i=0; i<cnt; i++) {
+        sprintf(buf, "loc=%.6lf,%.6lf&", lat[i], lon[i]);
+        strcat(url, buf);
+    }
+
+    sprintf(buf, "&z=%d", zoom);
+    strcat(url, buf);
+
+    DBG("url: %s", url);
+
+    json = callOSRM(url);
+
+    pfree(url);
+    url = NULL;
+
+    if (!json) {
+        ERROR_RETURN("Failed to get a json response from callOSRM");
+    }
+
+    jtree = json_tokener_parse(json);
+    if (!jtree) {
+        ERROR_RETURN("Failed to parse the json document");
+    }
+
+    pfree(json);
+    json = NULL;
+
+    jobj = json_object_object_get(jtree, "distance_table");
+    if (!jobj) {
+        ERROR_RETURN("Could not find \"distance_table\" in json document!");
+    }
+
+    if (json_object_get_type(jobj) != json_type_array) {
+        ERROR_RETURN("distance_table is not an array!");
+    }
+
+    icnt = json_object_array_length(jobj);
+    if (icnt != cnt) {
+        ERROR_RETURN("Table array length (%d) does not match request (%d)", icnt, cnt);
+    }
+
+    dm = palloc( cnt * cnt * sizeof(float8) );
+    for (i=0; i<cnt*cnt; i++) dm[i] = -1.0;
+
+    for (i=0; i<icnt; i++) {
+        ja = json_object_array_get_idx(jobj, i);
+        if (json_object_get_type(ja) != json_type_array) {
+            ERROR_RETURN("distance_table is not an array!");
+        }
+
+        jcnt = json_object_array_length(ja);
+        if (jcnt != cnt) {
+            ERROR_RETURN("Table array length (%d) does not match request (%d)", icnt, cnt);
+        }
+
+        for (j=0; j<jcnt; j++) {
+            jb = json_object_array_get_idx(ja, j);
+            dm[i*cnt + j] = (float8) json_object_get_double(jb);
+        }
+    }
+
+    json_object_put(jtree);
+    return dm;
+}
+
+
 /* ******************* public functions ********************** */
 
 /*
@@ -1585,14 +1699,34 @@ Datum osrm_dmatrix(PG_FUNCTION_ARGS)
         dmc->cnt   = nlat;
         dmc->dist  = dist;
         dmc->baseurl = baseurl;
+        dmc->dm    = NULL;
 
+        dmc->ver = get_osrm_version(baseurl);
+
+        DBG("   ver: %s", dmc->ver);
         DBG("   cnt: %d", dmc->cnt);
         DBG("   baseurl: '%s'", dmc->baseurl);
 
-        dmc->hints = palloc( dmc->cnt * sizeof(char *) );
-        for (i=0; i<dmc->cnt; i++) dmc->hints[i] = NULL;
+        /* we can call the osrm table function then do it */
+        if (strtod(dmc->ver, NULL) >= 0.4 && dmc->cnt < 101 && !dmc->dist) {
+            DBG("   Calling osrm/table function!");
+            dmc->dm = getOsrmTable(lat, lon, nlat, baseurl, 18);
+            if (dmc->dm) {
+                pfree(lat);
+                dmc->lat = NULL;
+                pfree(lon);
+                dmc->lon = NULL;
+            }
+        }
 
-        DBG("   zerod out hints array");
+        /* we didn't get the osrm table results, then proceed this way */
+        if (!dmc->dm) {
+            DBG("   Computing by looping!");
+            dmc->hints = palloc( dmc->cnt * sizeof(char *) );
+            for (i=0; i<dmc->cnt; i++) dmc->hints[i] = NULL;
+
+            DBG("   zerod out hints array");
+        }
 
         funcctx->max_calls = nlat * nlat;
         funcctx->user_fctx = dmc;
@@ -1648,38 +1782,43 @@ Datum osrm_dmatrix(PG_FUNCTION_ARGS)
             cost = 0.0;
         }
         else {
-            url = makeViaRouteUrl(dmc->lat[irow], dmc->lon[irow],
-                dmc->lat[icol], dmc->lon[icol],
-                dmc->hints[irow], dmc->hints[icol],
-                dmc->baseurl, 18, false, false);
-            DBG("   url: %s", url);
-
-            json = callOSRM(url);
-            pfree(url);
-
-            if (!json) {
-                cost = -1.0;
+            if (dmc->dm) {
+                cost = dmc->dm[irow*dmc->cnt + icol];
             }
             else {
-                route_summary *rs;
-                int nrs = 0;
-                int nhints = 0;
-                char **thesehints;
+                url = makeViaRouteUrl(dmc->lat[irow], dmc->lon[irow],
+                    dmc->lat[icol], dmc->lon[icol],
+                    dmc->hints[irow], dmc->hints[icol],
+                    dmc->baseurl, 18, false, false);
+                DBG("   url: %s", url);
 
-                rs = jget_summary(json, false, &nrs);
-                if (rs)
-                    cost = (double) (dmc->dist ? rs[0].tot_distance
-                                               : rs[0].tot_time);
-                else
+                json = callOSRM(url);
+                pfree(url);
+
+                if (!json) {
                     cost = -1.0;
+                }
+                else {
+                    route_summary *rs;
+                    int nrs = 0;
+                    int nhints = 0;
+                    char **thesehints;
 
-                thesehints = jget_hints(json, &nhints);
-                if (thesehints) {
-                    if (dmc->hints[irow] && nhints>0)
-                        dmc->hints[irow] = thesehints[0];
-                    if (dmc->hints[icol] && nhints>1)
-                        dmc->hints[icol] = thesehints[1];
-                    pfree(thesehints);
+                    rs = jget_summary(json, false, &nrs);
+                    if (rs)
+                        cost = (double) (dmc->dist ? rs[0].tot_distance
+                                                   : rs[0].tot_time);
+                    else
+                        cost = -1.0;
+
+                    thesehints = jget_hints(json, &nhints);
+                    if (thesehints) {
+                        if (dmc->hints[irow] && nhints>0)
+                            dmc->hints[irow] = thesehints[0];
+                        if (dmc->hints[icol] && nhints>1)
+                            dmc->hints[icol] = thesehints[1];
+                        pfree(thesehints);
+                    }
                 }
             }
         }

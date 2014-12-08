@@ -7,6 +7,7 @@
 -- Date: 2013-11-16
 ---------------------------------------------------------------------
 
+
 CREATE OR REPLACE FUNCTION osrm_locate(
         IN lat float8,
         IN lon float8,

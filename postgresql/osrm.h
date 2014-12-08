@@ -75,6 +75,8 @@ typedef struct dmatrix_cache2_t {
     float8 *lat;
     float8 *lon;
     char **hints;
+    char *ver;
+    float8 *dm;
 } dmatrix_cache2;
 
 /* Per-backend global state. */
