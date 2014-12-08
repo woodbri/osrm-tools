@@ -3,4 +3,6 @@
 starsnav/
 test/*.osrm*
 test/example*
+test/Shapes.rar
+test/ddnoded2.server.ini
 pgr2osrm/pgr2osrm
