@@ -15,6 +15,15 @@ This extension works by turning your queries into HTTP requests to the OSRM serv
 
 See the ``test.sql`` files for examples of how to use the various functions.
 
+For PostgreSQL 9.3 there is json parsing support built into the server. For
+example:
+```
+select  id, nfrom, nto, dist,
+        (jsonstr->'route_summary')->'total_distance' as osrm_distance,
+        (jsonstr->'route_summary')->'total_time' as osrm_time
+  from distance_matrix_b  where id=1;
+```
+
 ----------------------------------------------------------------------------
 
 Support

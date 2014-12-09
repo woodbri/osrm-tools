@@ -13,10 +13,11 @@
 
 /*PostgreSQL specific*/
 #include "postgres.h"
+#include "pg_config.h"
 #include <inttypes.h>
 #include "access/heapam.h"
 #include "access/htup.h"
-#if PGSQL_VERSION > 92
+#if PG_VERSION_NUM / 100 > 902
 #include "access/htup_details.h"
 #endif
 #include "catalog/pg_type.h"
